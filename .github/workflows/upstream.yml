@@ -4,7 +4,9 @@ name: Upstream dsh
 # pins, the runtime is locked and booted once here first; only then are an issue
 # and a pull request that closes it opened. Merging that pull request publishes a
 # new app version (see ci.yml). Pull requests opened with the built-in token do
-# not start CI, which is why this run does the building.
+# not start CI, which is why this run does the building. Opening them at all needs
+# Settings → Actions → General → "Allow GitHub Actions to create and approve pull
+# requests".
 on:
   schedule:
     - cron: '20 1 * * *'
@@ -36,6 +38,7 @@ jobs:
       - id: check
         env:
           WANTED: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           locked="$(sed -n 's/^    "@deepseek-ai\/dsh": "\(.*\)"$/\1/p' runtime/package.json)"
           wanted="${WANTED:-$(npm view @deepseek-ai/dsh@latest version)}"
@@ -45,9 +48,11 @@ jobs:
             echo "::notice::the runtime already pins dsh $wanted"
             exit 0
           fi
-          # An open branch means the upgrade is already waiting for review.
-          if git ls-remote --exit-code --heads origin "chore/dsh-$wanted" > /dev/null 2>&1; then
-            echo "::notice::chore/dsh-$wanted already exists"
+          # A pull request for this version, open or closed, means it was proposed already.
+          # A branch without one is left from a run that failed before opening it: redo it.
+          proposed="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "chore/dsh-$wanted" --state all --json url --jq '.[0].url // empty')"
+          if [ -n "$proposed" ]; then
+            echo "::notice::dsh $wanted was already proposed in $proposed"
             exit 0
           fi
           echo "version=$wanted" >> "$GITHUB_OUTPUT"
@@ -93,7 +98,8 @@ jobs:
           git switch -c "$branch"
           git add runtime/package.json runtime/pnpm-lock.yaml
           git commit -m "chore: 升级 dsh 到 $DSH_VERSION"
-          git push -u origin "$branch"
+          # The branch may be left from a run that failed before opening the pull request.
+          git push --force -u origin "$branch"
 
           cat > "$RUNNER_TEMP/issue.md" <<EOF
           npm 上的 \`@deepseek-ai/dsh\` 已发布 **$DSH_VERSION**，仓库当前锁定的是 $LOCKED。
@@ -103,7 +109,12 @@ jobs:
 
           升级用的 PR 已经自动提交，合并即发布新版 App。
           EOF
-          issue="$(gh issue create --title "dsh $DSH_VERSION 已发布" --body-file "$RUNNER_TEMP/issue.md")"
+          # Reuse the issue such a failed run opened.
+          export ISSUE_TITLE="dsh $DSH_VERSION 已发布"
+          issue="$(gh issue list --state open --limit 100 --json title,url --jq '[.[] | select(.title == env.ISSUE_TITLE)][0].url // empty')"
+          if [ -z "$issue" ]; then
+            issue="$(gh issue create --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/issue.md")"
+          fi
 
           cat > "$RUNNER_TEMP/pr.md" <<EOF
           把内置运行时从 dsh $LOCKED 升到 **$DSH_VERSION**。
@@ -116,4 +127,7 @@ jobs:
 
           Closes $issue
           EOF
-          gh pr create --base main --head "$branch" --title "chore: 升级 dsh 到 $DSH_VERSION" --body-file "$RUNNER_TEMP/pr.md"
+          if ! gh pr create --base main --head "$branch" --title "chore: 升级 dsh 到 $DSH_VERSION" --body-file "$RUNNER_TEMP/pr.md"; then
+            echo "::error::could not open the pull request. If GitHub Actions is not permitted to create pull requests, enable Settings → Actions → General → Allow GitHub Actions to create and approve pull requests; the next run (or a re-run) reuses $branch and $issue."
+            exit 1
+          fi
