@@ -3,7 +3,8 @@
 # bundled pnpm:
 #   make lock                             # re-resolve the pinned version
 #   make lock DSH_VERSION=0.1.6-alpha.2   # pin any published version
-# Resolutions that still satisfy the new tree are kept, as `pnpm update` would.
+# Re-resolving the pinned version keeps the committed resolutions; a new pin
+# resolves the whole tree from scratch.
 source "$(dirname "$0")/config.sh"
 source "$(dirname "$0")/toolchain.sh"
 
@@ -19,7 +20,12 @@ install_node "$WORK/toolchain"
 install_pnpm "$WORK/toolchain"
 
 cp "$RUNTIME_PROJECT/package.json" "$RUNTIME_PROJECT/pnpm-workspace.yaml" "$WORK/project/"
-if [ -f "$RUNTIME_PROJECT/pnpm-lock.yaml" ]; then cp "$RUNTIME_PROJECT/pnpm-lock.yaml" "$WORK/project/"; fi
+# Across dsh versions the old lock would keep stale peers: pnpm holds on to the
+# resolutions of auto-installed peers even when the new plugins' ranges exclude
+# them (dsh 0.1.6-alpha.2 kept dsh-attachment 0.1.5-rc.2 and failed to boot).
+if [ -f "$RUNTIME_PROJECT/pnpm-lock.yaml" ] && [ "$DSH_VERSION" = "$LOCKED_DSH_VERSION" ]; then
+  cp "$RUNTIME_PROJECT/pnpm-lock.yaml" "$WORK/project/"
+fi
 # Change only the dsh pin; other package.json fields stay as committed.
 "$WORK/toolchain/node/bin/node" -e '
   const fs = require("node:fs")
