@@ -53,7 +53,7 @@ dsh 及其全部依赖由仓库里的运行时项目锁定：
 
 构建时用 `pnpm install --frozen-lockfile` 安装，同一份锁文件每次装出相同的依赖；锁文件与 `package.json` 不一致时安装失败。`runtime/package.json` 锁定的版本就是构建的 dsh 版本，显式传入的 `DSH_VERSION` 与它不一致时直接报错并提示运行 `make lock`。锁文件包含各平台的可选依赖条目，arm64 与 Intel 构建共用一份。
 
-升级 dsh：`make lock DSH_VERSION=<版本>` 换版本，提交 `runtime/` 的改动即可。`make lock` 只改 dsh 的版本号，仍然满足依赖范围的其他包保持原版本；不带版本时是按当前锁定的版本重新解析。
+升级 dsh：`make lock DSH_VERSION=<版本>` 换版本，提交 `runtime/` 的改动即可。换版本时整棵依赖树从头解析，不沿用旧锁文件（否则 pnpm 自动补齐的 peer 依赖会停在旧版本，与新版插件对不上）；不带版本时是按当前锁定的版本重新解析，已锁定的包保持原版本。
 
 其他可覆盖的设置：
 
